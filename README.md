@@ -30,6 +30,9 @@ over him and he'll stop — and the glass jumps.
 | `npm test` | `node:test`, against a stub xAI socket |
 | `npm run lint` | |
 
+CI runs the lint, the tests on Node 22.12 and 24, and a build that then has to
+boot and serve itself over both HTTP and HTTPS.
+
 ### On a phone
 
 ```sh
@@ -56,7 +59,7 @@ with it and the `--https` flag is unnecessary. Same for anything public-facing.
 | Variable | Default | Role |
 |---|---|---|
 | `XAI_API_KEY` | — | Required. Stays in the Node process. |
-| `XAI_VOICE` | `rex` | The low, dry end of xAI's roster — `rex`, `sal`, `atlas`, `zagan`, `orion`, `perseus`, `leo`, `helix`, `zenith`, `rigel`, `castor`, `ursa`, `naksh`, `kepler` — or any other voice id, which is honoured and added to the picker |
+| `XAI_VOICE` | `atlas` | The low, dry end of xAI's roster — `atlas`, `rex`, `sal`, `zagan`, `orion`, `perseus`, `leo`, `helix`, `zenith`, `rigel`, `castor`, `ursa`, `naksh`, `kepler` — or any other voice id, which is honoured and added to the picker |
 | `XAI_MODEL` | `grok-voice-latest` | Also `grok-voice-think-fast-1.0` |
 | `XAI_REALTIME_URL` | xAI | Points the proxy at a gateway or a stub |
 | `XAI_WEB_SEARCH` | `true` | |
@@ -161,6 +164,7 @@ allowlist, and nothing here has wanted one yet.
 
 ```
 index.html              Markup only — Vite's entry
+prototype/              Where the character came from, as single-file pages
 public/
   pcm-worklet.js        Mic → 24 kHz PCM16, on the audio thread
 src/
@@ -199,6 +203,8 @@ src/
     config.js           The environment, resolved once
     static.js           Hosting for dist/ — production only
 test/                   node:test, against a stub xAI socket
+.github/workflows/      Lint, tests on two Node versions, and a build that has
+                        to come up and serve itself
 ```
 
 `src/client/icy/` is a single-file prototype split into modules — the original
@@ -209,6 +215,13 @@ springs and the shape maths are the prototype's, verbatim. What the app adds is
 who chooses the mood. `src/client/vendor/three-d-stage.js` is a copied starter
 component with two local changes, listed at the top of the file — re-copying it
 drops them.
+
+The camera is the one thing the split did change. The glass leans its mouth
+toward you and the camera sits above it, so you look down into the drink rather
+than at the surface edge-on — and the framing is measured off the object's own
+bounds and refits on resize, which the starter component's one-shot vertical
+framing doesn't do. On a phone held upright that is the difference between a
+glass and a slice of one.
 
 ## States
 
@@ -263,7 +276,7 @@ rippled by whatever the cube just did.
 Both transcript events carry the whole turn rather than an increment. That is
 an xAI divergence worth knowing about: it renames OpenAI's
 `input_audio_transcription.delta` to `.updated` and makes it *cumulative*, so
-appending it gives you "hello hello there hello there rock". `events.js`
+appending it gives you "hello hello there hello there icy". `events.js`
 handles the two shapes apart — `.delta` appends, `.updated` replaces.
 
 Icy takes audio-shaped input, which is the whole point of the split:

@@ -14,7 +14,7 @@ import { readFileSync } from 'node:fs';
    low, dry, unhurried. The light and airy end of the roster (`ara`, `eve`,
    `carina`, `luna`, `iris`, `celeste`, `lumen`, `lux`, `cosmo`, `sirius`,
    `altair`, `helios`) is deliberately absent — an ice cube does not sound
-   upbeat. `rex` leads because it is the one that sounds like it has been in
+   upbeat. `atlas` leads because it is the one that sounds like it has been in
    the glass a while.
 
    xAI does have a voices endpoint now (`GET /v1/tts/voices`), but it returns
@@ -22,7 +22,7 @@ import { readFileSync } from 'node:fs';
    unrecognised XAI_VOICE is still honoured and shows up in the picker, so
    anything omitted here is a default we don't pick, not a voice we block. */
 export const KNOWN_VOICES = Object.freeze([
-  'rex', 'sal', 'atlas', 'zagan', 'orion', 'perseus', 'leo',
+  'atlas', 'rex', 'sal', 'zagan', 'orion', 'perseus', 'leo',
   'helix', 'zenith', 'rigel', 'castor', 'ursa', 'naksh', 'kepler',
 ]);
 

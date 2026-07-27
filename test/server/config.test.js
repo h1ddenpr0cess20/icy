@@ -5,9 +5,9 @@ import { KNOWN_VOICES, loadConfig } from '../../src/server/config.js';
 import { buildTools } from '../../src/server/persona.js';
 
 describe('loadConfig', () => {
-  it('defaults to rex, which is the one that sounds like it has been in the glass a while', () => {
+  it('defaults to atlas, which is the one that sounds like it has been in the glass a while', () => {
     const config = loadConfig({});
-    assert.equal(config.defaultVoice, 'rex');
+    assert.equal(config.defaultVoice, 'atlas');
     assert.deepEqual(config.voices, [...KNOWN_VOICES]);
   });
 
