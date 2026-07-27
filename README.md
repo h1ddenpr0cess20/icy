@@ -1,0 +1,280 @@
+# Icy
+
+A voice agent rendered as an ice cube in a glass of brown liquid. Cold, dry,
+faintly amused, dissolving the whole time it is talking to you, and correct
+anyway. Driven by an xAI Grok speech-to-speech session; the cube's bob, tumble
+and swirl are read off the live audio, so it moves with whichever of you is
+talking.
+
+It can search the web and X, and call remote MCP servers.
+
+## Run
+
+```sh
+npm install
+cp .env.example .env      # add your XAI_API_KEY
+npm run dev               # → http://localhost:5173
+```
+
+Click the mic, allow the browser's microphone prompt, and start talking. Talk
+over him and he'll stop — and the glass jumps.
+
+| Script | |
+|---|---|
+| `npm run dev` | Vite, with the proxy mounted as middleware — one process |
+| `npm run dev:lan` | The same, over HTTPS on the network — for a phone |
+| `npm run build` | Bundles the client to `dist/` |
+| `npm start` | Serves `dist/` with the same proxy in front |
+| `npm run preview` | `build` then `start` |
+| `npm run preview:lan` | `build` then `start`, over HTTPS on the network |
+| `npm test` | `node:test`, against a stub xAI socket |
+| `npm run lint` | |
+
+### On a phone
+
+```sh
+npm run dev:lan           # → https://192.168.x.x:5173, printed on start
+```
+
+Microphone access needs a secure context. `localhost` is one; a LAN address
+over plain HTTP is not — `navigator.mediaDevices` isn't just refused there, it
+doesn't exist, so the page can't even raise the mic prompt. The `:lan` scripts
+serve HTTPS with a self-signed certificate, which is a secure context. The
+realtime socket follows the page onto `wss:` by itself.
+
+No browser trusts that certificate, so the phone shows a warning the first time
+("Advanced" → proceed on Chrome, "Show details" → "visit this website" on
+Safari). Tap through it once per device and the mic works from then on. The
+certificate is generated on first use and cached in `node_modules/.vite/`, and
+both `:lan` scripts share it, so one warning covers both.
+
+To skip the warning entirely, bring a certificate the device already trusts —
+[mkcert](https://github.com/FiloSottile/mkcert) issues one for a LAN IP in a
+line — and point `SSL_KEY` and `SSL_CERT` at it. `npm start` then serves HTTPS
+with it and the `--https` flag is unnecessary. Same for anything public-facing.
+
+| Variable | Default | Role |
+|---|---|---|
+| `XAI_API_KEY` | — | Required. Stays in the Node process. |
+| `XAI_VOICE` | `rex` | The low, dry end of xAI's roster — `rex`, `sal`, `atlas`, `zagan`, `orion`, `perseus`, `leo`, `helix`, `zenith`, `rigel`, `castor`, `ursa`, `naksh`, `kepler` — or any other voice id, which is honoured and added to the picker |
+| `XAI_MODEL` | `grok-voice-latest` | Also `grok-voice-think-fast-1.0` |
+| `XAI_REALTIME_URL` | xAI | Points the proxy at a gateway or a stub |
+| `XAI_WEB_SEARCH` | `true` | |
+| `XAI_X_SEARCH` | `true` | |
+| `XAI_MCP_SERVERS` | — | JSON array of remote MCP servers, or put it in `mcp.json` |
+| `PORT` | `5173` | |
+| `SSL_KEY`, `SSL_CERT` | — | Paths to a real certificate; `npm start` then serves HTTPS |
+
+Both `npm run dev` and `npm start` read `.env`.
+
+## How the call is wired
+
+Every frame of audio goes through the Node process:
+
+```
+browser  ──ws──▶  /realtime  ──ws──▶  wss://api.x.ai/v1/realtime
+```
+
+That is a deliberate cost, and it is the main way this differs from an
+equivalent app on OpenAI's Realtime API. There, the browser dials the provider
+directly with an ephemeral secret and audio never touches your server. Here it
+can't:
+
+- **xAI's `/v1/realtime/client_secrets` takes no `session` field.** The token it
+  mints carries no configuration, so a page that dialled xAI directly would have
+  to send its own `session.update` — putting the persona, the tool list and any
+  MCP `authorization` header in client code, where they are readable and
+  editable.
+- **The token lasts five minutes.** Conversations routinely outlive that.
+
+So the socket lives here, and the page holds no credential of any kind. On
+connect, the proxy is the one that sends `session.update`: persona, voice,
+turn detection, audio format, tools. Only then does it forward anything the
+page queued.
+
+What the page may say upstream is an allowlist, not a filter — audio frames, a
+typed message, a request to respond, a cancel. Two frames are treated as
+persona overrides and dropped: a `session.update` from the browser, and the
+`instructions` field on a `response.create`, which replaces the system prompt
+for one turn. `test/server/realtime.test.js` is the file that fails if that
+stops being true.
+
+## Audio
+
+WebRTC would have handled this. A WebSocket carrying base64 PCM does not, so
+both directions are the client's problem.
+
+**Up:** an `AudioWorklet` (`public/pcm-worklet.js`) takes the mic at whatever
+rate the hardware felt like, resamples to 24 kHz with linear interpolation, and
+posts 20 ms PCM16 frames. The `sampleRate` option on `AudioContext` is a hint —
+some browsers hand back the device rate, and a session that declares 24 kHz
+while sending 48 sounds like a chipmunk — so the conversion is done rather than
+requested.
+
+**Down:** chunks arrive *faster than real time* — the model produces ten seconds
+of speech in two — so playback can't be "play each as it lands" without
+overlapping. Each chunk is booked against a cursor running ahead of the clock.
+That cursor is also what makes barge-in work: interrupting means dropping
+everything booked but not yet heard, which is most of the answer.
+
+Turn-taking is server-side VAD, so speaking over Icy stops him generating;
+`input_audio_buffer.speech_started` is what tells the page to drop its queue. A
+new `response.created` arriving while audio is still playing flushes it too, as
+a backstop for a turn cut short without notice. `Escape` cancels for the typed
+path.
+
+The worklet lives in `public/` rather than being imported. Vite inlines assets
+under its size limit as `data:text/javascript` URLs, and `addModule()` rejects
+those on Safari and under any CSP that doesn't allow `data:` — it works in dev
+and breaks in production, silently.
+
+## Tools
+
+`web_search` and `x_search` are on by default. Both execute inside xAI, so
+there is nothing to implement here and no second credential to hold — they cost
+a flag in `.env`. Icy is told not to narrate a search, so the only sign one is
+running is the label under the status chip.
+
+Remote **MCP** servers go in `XAI_MCP_SERVERS` as a JSON array, or in `mcp.json`
+(gitignored), and are executed by xAI as well:
+
+```json
+[
+  {
+    "server_label": "orders",
+    "server_url": "https://mcp.example.com/mcp",
+    "server_description": "Order lookup",
+    "allowed_tools": ["lookup_order"],
+    "authorization": "Bearer ..."
+  }
+]
+```
+
+Credentials in that file never leave the Node process. `/api/config` reports
+tool *labels* only, which is what the strip under the composer renders.
+
+Client-side function tools are the one kind not wired up: `session.tools` would
+take them, but they need a `function_call_output` path back through the proxy's
+allowlist, and nothing here has wanted one yet.
+
+## Layout
+
+```
+index.html              Markup only — Vite's entry
+public/
+  pcm-worklet.js        Mic → 24 kHz PCM16, on the audio thread
+src/
+  client/
+    main.js             The wiring, and nothing else
+    styles.css          The HUD around the glass
+    api.js              /api/config, as a function
+    icy/                Geometry and animation. Knows nothing about transports
+      index.js            The controller and the per-frame loop
+      geometry.js         The cube: superellipsoid, frost rim, core, bubbles
+      glass.js            The tumbler and the pour, off one shared profile
+      moods.js            Targets per conversational state
+      environment.js      Cold studio env map
+    session/            The call. Emits transport-agnostic events
+      index.js            Lifecycle: mic, socket, meter, tear down
+      socket.js           The WebSocket to our own proxy
+      audio.js            Capture and playback over Web Audio
+      codec.js            PCM16 ↔ base64
+      events.js           xAI server events → this vocabulary
+      metering.js         An analyser → one 0..1 number per frame
+      emitter.js
+      constants.js        The wire format, shared with the server
+    ui/                 What you read and what you press
+      hud.js              Status chip, transcript, caption, tool label
+      controls.js         Mic, text field, send, pickers
+      viewport.js         Keeps the composer above the on-screen keyboard
+      stage.js            Strips the starter component's own chrome
+    vendor/
+      three-d-stage.js    Starter component (renderer, lighting, camera, controls)
+  server/
+    index.js            Entry point
+    app.js              Middleware chain + the upgrade handler
+    api.js              /api/config
+    realtime.js         The socket proxy, and the allowlist
+    persona.js          Who Icy is, and the session config
+    config.js           The environment, resolved once
+    static.js           Hosting for dist/ — production only
+test/                   node:test, against a stub xAI socket
+```
+
+`src/client/icy/` is a single-file prototype split into modules — the original
+is kept at `prototype/scotch-glass.html` if you want to see where it started,
+alongside `prototype/ice-cube.html`, the same character without the glass. The
+split changed none of the prototype's numbers — the moods, the
+springs and the shape maths are the prototype's, verbatim. What the app adds is
+who chooses the mood. `src/client/vendor/three-d-stage.js` is a copied starter
+component with two local changes, listed at the top of the file — re-copying it
+drops them.
+
+## States
+
+`idle` · `listening` · `thinking` · `speaking` — each a set of targets for edge
+sharpness, glow, halo, spin, how high it rides in the drink, and how often and
+how hard it gets kicked. It eases between them, so transitions read as the same
+creature changing mood rather than a cut.
+
+The call maps onto them directly: `listening` from `speech_started` and between
+turns, `thinking` from `speech_stopped` until the first audio frame, `speaking`
+while there is audio booked, `idle` when there is no call.
+
+There is a fifth mood, `melting`, that no conversational state maps to: **it is
+what a broken API looks like.** A failed dial, a proxy that isn't running, a
+missing key, an error mid-call — the cube rounds off, sinks, thins out and
+gives itself up to the drink, which pales and rises as it does. It holds there
+until something works again, then refreezes. The caption says what broke; the
+melt is the part you can see from across the room, and nothing else in the app
+causes it, so it never means anything else.
+
+Being interrupted is not a mood. It is one hard kick into the springs that are
+already there, so he jumps on the frame you cut in and rocks himself flat again
+over the next second.
+
+Nothing here is a sine wave dressed up as motion. Every visible movement is a
+loose, lightly damped spring being kicked — the cube is buoyant, so it never
+sits where it was put. Each mood kicks on its own cadence: listening barely
+stirs, thinking walks him around the glass, speaking works the surface. While
+he talks, the kicks come from onsets in the audio envelope, so the bob lands on
+consonants and it looks like it is forming words. The surface of the drink is
+rippled by whatever the cube just did.
+
+## The transport seam
+
+`session/index.js` exposes `on`, `start`, `stop`, `send`, `cancel`, `messages`,
+`connected`, `busy`, `stale`, `state`, `model`, `voice` — and emits:
+
+```
+'state'        listening | thinking | speaking | idle
+'caption'      the assistant transcript for this turn, in full
+'user'         what the person said, in full
+'level'        0..1 sustained amplitude, per frame
+'pulse'        0..1 transient, one per discrete event
+'interrupted'  the person talked over Icy
+'tool'         a label while a server-side tool works, or null
+'busy'         whether a response is in flight
+'ready'        { model, voice } the proxy actually used
+'done'         { usage }
+'error'        { message }
+```
+
+Both transcript events carry the whole turn rather than an increment. That is
+an xAI divergence worth knowing about: it renames OpenAI's
+`input_audio_transcription.delta` to `.updated` and makes it *cumulative*, so
+appending it gives you "hello hello there hello there rock". `events.js`
+handles the two shapes apart — `.delta` appends, `.updated` replaces.
+
+Icy takes audio-shaped input, which is the whole point of the split:
+
+```js
+icy.setState('speaking')  // idle | listening | thinking | speaking
+icy.setLevel(0.62)        // sustained amplitude 0..1, sampled per frame
+icy.pulse(0.4)            // transient impulse 0..1, one per discrete event
+icy.rattle(0.9)           // it has been talked over and it did not care for it
+icy.melt(true)            // the API is unreachable — or, with false, it's back
+```
+
+Swapping providers means writing a different `createVoiceSession()` with that
+surface. `main.js` and Icy do not change.

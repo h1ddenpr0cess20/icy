@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Ice Cube — AI assistant avatar</title>
+<link rel="stylesheet" href="_ds/nocturne-ff3556a6-eb33-43c4-91f1-134ea1efe83f/styles.css">
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.184.0/build/three.module.js",
+    "three/addons/controls/OrbitControls.js": "https://unpkg.com/three@0.184.0/examples/jsm/controls/OrbitControls.js",
+    "three/addons/exporters/OBJExporter.js": "https://unpkg.com/three@0.184.0/examples/jsm/exporters/OBJExporter.js",
+    "three/addons/exporters/GLTFExporter.js": "https://unpkg.com/three@0.184.0/examples/jsm/exporters/GLTFExporter.js"
+  },
+  "integrity": {
+    "https://unpkg.com/three@0.184.0/build/three.module.js": "sha384-8FCZ1eVO6it4+pbec2aDtnTrwjWXZLJRC+MAGCIPDgsYnUrl/E0A2YlF8ioMKI/J",
+    "https://unpkg.com/three@0.184.0/build/three.core.js": "sha384-dw2ooPewaEIrAgl6oFDBmmBWCE9oW9LxRGcfwZ0hLvEprzo202wXl7vCYHRlSnOT",
+    "https://unpkg.com/three@0.184.0/examples/jsm/controls/OrbitControls.js": "sha384-4rziNxOBZKQ69i+w+f89KJ55TCYquwchVbByQwmaOeIOXdOU2PLDn3kOfXHwIJC9",
+    "https://unpkg.com/three@0.184.0/examples/jsm/exporters/OBJExporter.js": "sha384-nbwtoZENJD3Vq+ACK0CuGQdPMuDWHkamC2KJD70EV5nfg6jQjfppKOea07YJN+N3",
+    "https://unpkg.com/three@0.184.0/examples/jsm/exporters/GLTFExporter.js": "sha384-VofkvpG6HERhFCYbsUOHeNXBCqID2nfqkQqnVzE1jc/oPcz+qJ13ADdXH08hE+cQ"
+  }
+}
+</script>
+<style>
+  html, body { margin: 0; height: 100%; background: var(--color-bg); }
+  three-d-stage:not(:defined) { visibility: hidden; }
+  three-d-stage { display: block; width: 100vw; height: 100vh; }
+  #state {
+    position: fixed; left: var(--space-6, 24px); bottom: var(--space-5, 18px); z-index: 5;
+    display: flex; gap: var(--space-2, 8px); align-items: center;
+  }
+  #state .btn { letter-spacing: .1em; text-transform: uppercase; font-size: 11px; }
+  #state .btn[aria-pressed="true"] {
+    border-color: var(--color-accent);
+    background: color-mix(in oklch, var(--color-accent) 18%, transparent);
+    color: var(--color-accent-200);
+  }
+  #meta {
+    position: fixed; left: var(--space-6, 24px); top: var(--space-6, 24px); z-index: 5;
+    color: var(--color-text);
+  }
+  #meta h1 { font-family: var(--font-heading); font-size: 20px; font-weight: 500; margin: 0 0 4px; }
+  #meta p { margin: 0; font-size: 12px; color: var(--color-neutral-400); max-width: 34ch; }
+</style>
+</head>
+<body>
+<three-d-stage name="ice-cube" background="#161826"></three-d-stage>
+<div id="meta">
+  <h1>Ice Cube</h1>
+  <p>Assistant avatar. Frozen and adrift; it slumps to meltwater only when you ask it to.</p>
+</div>
+<div id="state">
+  <button class="btn btn-secondary" data-mode="idle" aria-pressed="true">idle</button>
+  <button class="btn btn-secondary" data-mode="listening" aria-pressed="false">listening</button>
+  <button class="btn btn-secondary" data-mode="thinking" aria-pressed="false">thinking</button>
+  <button class="btn btn-secondary" data-mode="speaking" aria-pressed="false">speaking</button>
+  <button class="btn btn-secondary" data-mode="melting" aria-pressed="false">melting</button>
+</div>
+<script src="./three-d-stage.js"></script>
+<script type="module">
+const stage = document.querySelector('three-d-stage');
+const { THREE } = await stage.ready;
+
+/* cold studio environment: bright sky, dark floor, two specular sources —
+   ice needs something to refract or it renders as grey glass */
+try {
+  const c = document.createElement('canvas');
+  c.width = 96; c.height = 48;
+  const ctx = c.getContext('2d');
+  const g = ctx.createLinearGradient(0, 0, 0, 48);
+  g.addColorStop(0, '#ffffff'); g.addColorStop(0.4, '#dceaff');
+  g.addColorStop(0.55, '#5c6b85'); g.addColorStop(1, '#141824');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, 96, 48);
+  ctx.fillStyle = '#ffffff';
+  ctx.beginPath(); ctx.ellipse(26, 10, 14, 7, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(64, 6, 9, 4, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = 'rgba(190,225,255,0.95)';
+  ctx.beginPath(); ctx.ellipse(78, 20, 10, 6, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,0.6)';
+  ctx.fillRect(0, 22, 96, 2);
+  const tex = new THREE.Texture(c);
+  tex.mapping = THREE.EquirectangularReflectionMapping;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.needsUpdate = true;
+  const pmrem = new THREE.PMREMGenerator(stage._renderer);
+  stage._scene.environment = pmrem.fromEquirectangular(tex).texture;
+  pmrem.dispose(); tex.dispose();
+} catch (e) { /* environment is a nicety */ }
+
+const cube = new THREE.Group();
+cube.name = 'ice_cube';
+
+const R = 0.5;                       // half-extent, metres
+const iceColors = ['#dff1ff', '#c8e8ff', '#cfd8ff', '#d8f6ff'].map(h => new THREE.Color(h));
+const tintAt = (t, out) => {
+  const f = ((t % iceColors.length) + iceColors.length) % iceColors.length;
+  const i = Math.floor(f);
+  return out.copy(iceColors[i]).lerp(iceColors[(i + 1) % iceColors.length], f - i);
+};
+
+const iceMat = new THREE.MeshPhysicalMaterial({
+  name: 'ice',
+  color: new THREE.Color('#eef8ff'),
+  transparent: true,
+  opacity: 0.99,
+  transmission: 0.88,
+  thickness: 0.6,
+  envMapIntensity: 3.2,
+  specularIntensity: 1,
+  specularColor: new THREE.Color('#ffffff'),
+  ior: 1.31,
+  roughness: 0.045,
+  metalness: 0,
+  clearcoat: 1,
+  clearcoatRoughness: 0.015,
+  iridescence: 0.05,
+  iridescenceIOR: 1.31,
+  attenuationDistance: 1.15,
+  attenuationColor: new THREE.Color('#a6dcff'),
+  sheen: 0,
+});
+
+const iceGeo = new THREE.SphereGeometry(1, 128, 88);
+const ice = new THREE.Mesh(iceGeo, iceMat);
+ice.name = 'block';
+cube.add(ice);
+const dirs = iceGeo.attributes.position.array.slice();   // unit sphere directions
+/* frozen-in facet irregularity: fixed per vertex, so the surface never breathes */
+const chip = new Float32Array(dirs.length / 3);
+for (let i = 0, j = 0; i < dirs.length; i += 3, j++) {
+  const x = dirs[i], y = dirs[i + 1], z = dirs[i + 2];
+  chip[j] =
+    Math.sin(x * 6.1 + y * 4.3 - z * 5.7) * 0.5 +
+    Math.sin(y * 9.4 - z * 7.9 + x * 3.1) * 0.3 +
+    Math.sin(z * 13.7 + x * 11.2) * 0.2;
+}
+
+/* frost rim — fresnel bloom bound to the block's own geometry */
+const rimMat = new THREE.ShaderMaterial({
+  name: 'frost_rim',
+  uniforms: { uColor: { value: new THREE.Color('#bfe6ff') }, uStrength: { value: 0.5 } },
+  vertexShader: `
+    varying vec3 vN; varying vec3 vP;
+    void main() {
+      vN = normalize(normalMatrix * normal);
+      vec4 mv = modelViewMatrix * vec4(position * 1.03, 1.0);
+      vP = mv.xyz;
+      gl_Position = projectionMatrix * mv;
+    }`,
+  fragmentShader: `
+    uniform vec3 uColor; uniform float uStrength;
+    varying vec3 vN; varying vec3 vP;
+    void main() {
+      float f = 1.0 - abs(dot(normalize(vN), normalize(-vP)));
+      float a = pow(f, 2.4) * (1.0 - pow(f, 9.0)) * uStrength;
+      gl_FragColor = vec4(uColor * a, a);
+    }`,
+  transparent: true, blending: THREE.AdditiveBlending, depthWrite: false,
+});
+const rim = new THREE.Mesh(iceGeo, rimMat);
+rim.name = 'frost_rim';
+cube.add(rim);
+
+/* frozen core — the "attention" the avatar carries, a cloudy crystal */
+const coreMat = new THREE.MeshStandardMaterial({
+  name: 'core',
+  color: new THREE.Color('#cfeaff'),
+  emissive: new THREE.Color('#8fd8ff'),
+  emissiveIntensity: 1.6,
+  roughness: 0.95,
+  metalness: 0,
+  flatShading: true,
+  transparent: true,
+  opacity: 0.4,
+});
+const coreGeo = new THREE.OctahedronGeometry(0.21, 1);
+const core = new THREE.Mesh(coreGeo, coreMat);
+core.name = 'core';
+cube.add(core);
+const coreBase = coreGeo.attributes.position.array.slice();
+
+/* trapped air bubbles */
+const bubbleMat = new THREE.MeshPhysicalMaterial({
+  name: 'air_bubble',
+  color: new THREE.Color('#f4fdff'),
+  roughness: 0.04, metalness: 0,
+  transmission: 0.95, thickness: 0.06, ior: 1.05,
+  transparent: true, opacity: 0.45,
+});
+const bubbles = [];
+for (let i = 0; i < 9; i++) {
+  const b = new THREE.Mesh(new THREE.SphereGeometry(0.016 + (i % 4) * 0.012, 18, 12), bubbleMat);
+  b.name = 'air_bubble_' + (i + 1);
+  const a = i * 2.399963, rr = 0.13 + (i % 4) * 0.07;
+  b.userData.orbit = { a, rr, y: -0.22 + i * 0.055, sp: 0.12 + (i % 3) * 0.07 };
+  b.castShadow = false; b.receiveShadow = false;
+  bubbles.push(b); cube.add(b);
+}
+
+const MODES = {
+  //          sharp = rounded-cube exponent · shimmer = surface ripple · melt target
+  idle:      { sharp: 12,  shimmer: 0.4, speed: 0.8, spin: 0.06, glow: 1.6, halo: 0.3,  tint: 0.015, melt: 0, bob: 0.010 },
+  listening: { sharp: 17,  shimmer: 0.6, speed: 1.4, spin: 0.03, glow: 2.6, halo: 0.5,  tint: 0.03,  melt: 0, bob: 0.016 },
+  thinking:  { sharp: 9,   shimmer: 0.8, speed: 2.4, spin: 0.45, glow: 2.2, halo: 0.42, tint: 0.16,  melt: 0, bob: 0.030 },
+  speaking:  { sharp: 13,  shimmer: 1.0, speed: 3.2, spin: 0.09, glow: 3.2, halo: 0.6,  tint: 0.06,  melt: 0, bob: 0.045 },
+  melting:   { sharp: 4.2, shimmer: 1.4, speed: 1.0, spin: 0.02, glow: 1.0, halo: 0.2,  tint: 0.03,  melt: 1, bob: 0.003 },
+};
+let mode = MODES.idle, m = { ...MODES.idle };
+let modeName = 'idle';
+
+const buttons = [...document.querySelectorAll('#state button')];
+buttons.forEach(btn => btn.addEventListener('click', () => {
+  buttons.forEach(b => b.setAttribute('aria-pressed', String(b === btn)));
+  modeName = btn.dataset.mode;
+  mode = MODES[modeName];
+}));
+
+const smooth = x => x * x * (3 - 2 * x);
+const v = new THREE.Vector3();
+const tint = new THREE.Color();
+const clock = new THREE.Clock();
+let phase = 0, drift = 0, t = 0;
+
+ice.onBeforeRender = () => {
+  const dt = Math.min(clock.getDelta(), 0.05);
+  t += dt;
+  for (const k in m) m[k] += (mode[k] - m[k]) * Math.min(1, dt * (k === 'melt' ? 0.9 : 3));
+  phase += dt * m.speed;
+  drift += dt * m.tint;
+
+  const melt = m.melt;
+
+  const sharp = m.sharp - melt * (m.sharp - 4) * 0.75;                 // edges round off as it goes
+  const glisten = m.shimmer * melt;
+  const e = smooth(melt);                             // eased melt
+  const RP = R * 1.75, HH = R * 0.105;                // pool radius / depth
+  const pos = iceGeo.attributes.position, arr = pos.array;
+
+  for (let i = 0; i < arr.length; i += 3) {
+    const dx = dirs[i], dy = dirs[i + 1], dz = dirs[i + 2];
+    // unit sphere -> rounded cube (superellipsoid), exponent = edge sharpness
+    const r = 1 / Math.pow(
+      Math.pow(Math.abs(dx), sharp) + Math.pow(Math.abs(dy), sharp) + Math.pow(Math.abs(dz), sharp),
+      1 / sharp);
+    let x = dx * r * R, y = dy * r * R, z = dz * r * R;
+
+    // frozen facet irregularity — static, plus a faint surface glisten near melt
+    const rp = 1 + chip[i / 3] * 0.011 * (1 - e) + glisten * 0.0015 * Math.sin(dy * 30 + phase * 3.0);
+    x *= rp; y *= rp; z *= rp;
+
+    // dished top, the way a tray cube freezes
+    y -= Math.max(0, dy) * 0.05 * R * (1 - melt) * (1 - (x * x + z * z) / (R * R));
+
+    if (e > 0.001) {
+      // target shape: a rounded pancake of water resting on the base plane
+      const rho = Math.hypot(dx, dz);
+      const d = Math.pow(Math.pow(rho, 4) + Math.pow(Math.abs(dy), 4), 0.25) || 1;
+      const wob = 1 + 0.05 * Math.sin(Math.atan2(dz, dx) * 5 + phase * 0.8);
+      const tx = (dx / d) * RP * wob, tz = (dz / d) * RP * wob;
+      const ty = (dy / d) * HH - R + HH;
+      x += (tx - x) * e; y += (ty - y) * e; z += (tz - z) * e;
+    }
+    arr[i] = x; arr[i + 1] = y; arr[i + 2] = z;
+  }
+  pos.needsUpdate = true;
+  iceGeo.computeVertexNormals();
+
+  /* core: shivers, sinks and dims as the block gives way */
+  const cpos = coreGeo.attributes.position, ca = cpos.array;
+  const jitter = 0.006 * (1 + m.shimmer);
+  for (let i = 0; i < ca.length; i += 3) {
+    v.set(coreBase[i], coreBase[i + 1], coreBase[i + 2]);
+    const s = 1 + jitter * Math.sin(v.x * 21 + v.y * 13 - phase * 3.1);
+    ca[i] = v.x * s; ca[i + 1] = v.y * s; ca[i + 2] = v.z * s;
+  }
+  cpos.needsUpdate = true;
+  coreGeo.computeVertexNormals();
+
+  tintAt(drift, tint);
+  iceMat.color.copy(tint);
+  iceMat.roughness = 0.14 + melt * 0.06;
+  iceMat.attenuationColor.copy(tint).lerp(new THREE.Color('#7fc4ff'), 0.55);
+  coreMat.emissive.copy(tint).lerp(new THREE.Color('#6fd2ff'), 0.6);
+  coreMat.emissiveIntensity = m.glow * (1 - e) * (0.9 + Math.sin(phase * 2.3) * 0.1);
+  coreMat.opacity = 0.4 * Math.max(0, 1 - e * 1.6);      // the heart thaws away entirely
+  core.visible = coreMat.opacity > 0.005;
+  rimMat.uniforms.uColor.value.copy(tint);
+  rimMat.uniforms.uStrength.value = m.halo * 1.1 * (1 - melt * 0.7) * (0.85 + Math.sin(phase * 1.9) * 0.15);
+
+  core.scale.setScalar(1 - e * 0.62);
+  core.position.set(Math.sin(phase * 0.6) * 0.02 * (1 - e),
+    (Math.sin(phase * 0.8) * 0.015) * (1 - e) + e * (-R + 0.055),
+    Math.cos(phase * 0.5) * 0.02 * (1 - e));
+  core.rotation.set(phase * 0.12, phase * 0.21, 0);
+
+  bubbles.forEach((b, i) => {
+    const o = b.userData.orbit, a = o.a + phase * o.sp;
+    const rr = o.rr * (1 + e * 1.1);
+    const fy = o.y + Math.sin(phase * 0.7 + o.a) * 0.03;
+    b.position.set(Math.cos(a) * rr, fy + (-R + 0.045 - fy) * e, Math.sin(a) * rr);
+    b.scale.setScalar(1 - e * 0.5);
+    bubbleMat.opacity = 0.45 * Math.max(0, 1 - e * 1.5);
+    b.visible = bubbleMat.opacity > 0.005;
+  });
+
+  /* aimless drift — layered sines at incommensurate rates read as random */
+  const w = m.bob * 4 * (1 - e), lift = (1 - e);
+  cube.position.set(
+    (Math.sin(t * 0.37) + 0.6 * Math.sin(t * 0.91 + 1.7) + 0.35 * Math.sin(t * 1.63 + 4.1)) * w,
+    (Math.sin(t * 0.53 + 0.4) + 0.5 * Math.sin(t * 1.27 + 2.6)) * w * 0.7 + 0.06 * lift,
+    (Math.cos(t * 0.43 + 2.1) + 0.6 * Math.sin(t * 1.07 + 0.9) + 0.3 * Math.cos(t * 1.79)) * w);
+  cube.rotation.x = (Math.sin(t * 0.31) + 0.4 * Math.sin(t * 0.83 + 1.2)) * 0.18 * lift;
+  cube.rotation.z = (Math.cos(t * 0.27 + 1.9) + 0.4 * Math.sin(t * 0.71)) * 0.16 * lift;
+  cube.rotation.y += dt * m.spin * (1 - e * 0.8);
+};
+
+stage.setObject(cube);
+rim.castShadow = false; rim.receiveShadow = false;
+</script>
+</body>
+</html>
